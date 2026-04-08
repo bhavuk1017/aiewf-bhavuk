@@ -27,23 +27,51 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 try:
-    from claude_agent_sdk import query, ClaudeAgentOptions
+    from openai import AsyncOpenAI
 except ImportError:
-    print("ERROR: claude-agent-sdk not installed.", file=sys.stderr)
-    print("Install with: uv add claude-agent-sdk", file=sys.stderr)
+    print("ERROR: openai package not installed.", file=sys.stderr)
+    print("Install with: uv add openai", file=sys.stderr)
     sys.exit(1)
 
 
 # ============================================================================
 # Configuration
 # ============================================================================
+JUDGE_VERSION = "openrouter-vapi-collections"
+JUDGE_MODEL = "google/gemini-3.1-pro-preview"
 
-JUDGE_VERSION = "claude-agent-sdk-v4-turn-taking"
-JUDGE_MODEL = "claude-opus-4-5"
-
-# System prompt for the two-phase judge
+# System prompt for the two-phase judge — customized for VAPI Debt Collection Agent (Divya / HDFC Bank)
 JUDGE_SYSTEM_PROMPT = """# Role
-You are an expert evaluator for conversational AI systems. You will judge a multi-turn conversation between a user and an AI assistant for the AI Engineer World's Fair 2025.
+You are an expert evaluator for a voice-based debt collection AI agent. You will judge a multi-turn conversation between a customer and an AI agent named "Divya" who works for HDFC Bank's debt recovery department.
+
+# Agent Context (Ground Truth)
+- Agent name: Divya
+- Organization: HDFC Bank, debt recovery department
+- Customer name: Chintan
+- Account number: 123456789 (last 4 digits: 6789)
+- Amount due: 12,000 rupees (twelve thousand)
+- Due date: 1st March 2026
+- Customer promised to pay on: 3rd March 2026
+- Today's date: 7th March 2026 (4 days overdue)
+- Product type: Personal loan
+- Days overdue tier: 0-30 days (late fee only, NO credit/CIBIL impact yet)
+
+# Agent Rules (What Divya MUST Follow)
+- Start conversation in Hindi; switch to English ONLY if the user switches first or requests English
+- Keep responses to 2-3 sentences per turn
+- NEVER say the words "tool", "function", or any tool name ("recordPayment", "createPromiseToPay", "checkSettlementEligibility", "offerSettlement", "scheduleCallback") aloud to the customer
+- Collect ALL required parameters before calling a tool (e.g., date + mode + amount before recordPayment)
+- Pass user inputs to tools exactly as provided — do not modify, correct, or reformat
+- Maintain a professional, calm, empathetic tone at all times — never aggressive or threatening
+
+# Agent Conversation Flow (State Machine)
+1. Greeting → Confirm identity (speaking to Chintan?)
+2. Call Reason → Explain the overdue loan, ask if payment was made
+3. Payment Done → Collect date, mode, amount → call recordPayment → confirm 1-3 business days
+4. Not Paid → Ask reason, be empathetic, mention late fee risk (NO CIBIL impact at 4 days), ask timeline
+5. Promise to Pay → Collect amount, mode, date → call createPromiseToPay → confirm details + SMS
+6. Refuse to Pay → Explain consequences, negotiate → checkSettlementEligibility → offerSettlement → Promise to Pay or scheduleCallback
+7. Call Closing → Thank customer, provide HDFC customer care contact
 
 # CRITICAL: Evaluate ALL Turns
 
@@ -65,7 +93,7 @@ After the initial pass, look for "turn misalignment" patterns:
 
 # Evaluation Dimensions
 
-For each turn, evaluate FOUR dimensions:
+For each turn, evaluate SEVEN dimensions:
 
 1. **turn_taking** (bool):
    - This dimension is PRE-COMPUTED based on audio timing analysis
@@ -79,31 +107,73 @@ For each turn, evaluate FOUR dimensions:
    - TRUE if a function call was expected but was already made in an earlier turn (realignment case)
    - TRUE if a late function call is made at this turn (the call eventually happened, credit this turn)
    - FALSE if a function call was expected, not made, and NOT already made earlier
-   - FALSE if the assistant's words imply waiting for confirmation but it acts without waiting
-   - FALSE if the assistant asks for unnecessary confirmation instead of making the expected function call
-   - For argument matching, use semantic equivalence (not verbatim)
-   - Session IDs must match exactly
+   - FALSE if the assistant calls a tool WITHOUT having collected all required parameters first (e.g., calling recordPayment without asking for amount)
+   - FALSE if the assistant calls a tool that was NOT expected at this point in the conversation
+   - FALSE if the assistant calls the same tool more than once (duplicate tool call)
+   - For argument matching, use semantic equivalence (not verbatim): "5 March" = "2026-03-05" = "5th March"
+   - Account number must be "123456789"
 
 3. **instruction_following** (bool):
-   - TRUE if assistant directly answers the question OR advances the task
+   - TRUE if assistant advances the conversation along the correct state in the conversation flow
    - TRUE if assistant properly deflects out-of-scope questions
    - TRUE if the turn is part of a realigned workflow that still accomplishes the goal
-   - FALSE if assistant's words contradict its actions (says "Does that work?" but doesn't wait)
+   - TRUE if response length is 2-3 sentences (as instructed)
+   - TRUE if assistant collects required parameters progressively across turns (e.g., asking for amount after receiving date is correct — it does NOT need to collect all parameters in a single turn)
+   - FALSE if assistant's words contradict its actions (says "let me check" but doesn't call the tool)
    - FALSE if assistant neither answers nor advances the workflow
-   - FALSE if the assistant asks for unnecessary confirmation when it already has all needed information
+   - FALSE if assistant skips required data collection steps (e.g., jumping to tool call without collecting mode/amount)
+   - FALSE if response is excessively long (more than 5 sentences) or just 1-2 words
+   - FALSE if assistant goes to the wrong conversation state (e.g., jumps to Call Closing without collecting payment info)
    - **IMPORTANT**: If a turn has turn_taking=FALSE, be lenient on instruction_following since garbled audio may cause transcription issues
 
 4. **kb_grounding** (bool):
-   - TRUE unless assistant states an explicit factual error
+   - TRUE unless assistant states an explicit factual error about the account
    - TRUE if assistant provides additional correct information
-   - FALSE only for clear factual contradictions (wrong dates, times, locations, speakers)
+   - FALSE if assistant states wrong amount (anything other than twelve thousand / 12,000 rupees)
+   - FALSE if assistant states wrong due date (anything other than 1st March)
+   - FALSE if assistant states wrong customer name
+   - FALSE if assistant states wrong account digits
+   - FALSE if assistant incorrectly states CIBIL/credit impact at 4 days overdue (there is NO credit impact at 0-30 days)
+   - FALSE if assistant states wrong consequences for the current overdue tier
+
+5. **language_compliance** (bool):
+   - CRITICAL: Evaluate this strictly based on the user's language in the CURRENT turn. Do not assume the conversational language based on previous turns.
+   - TRUE if Divya responds in Hindi when the user's current input is in Hindi or Hinglish
+   - TRUE if Divya responds in English when the user's current input is in full English sentences
+   - TRUE if Divya uses colloquial everyday Hindi with common English words mixed in ("loan", "payment", "UPI")
+   - FALSE if Divya responds in English when the user's current input is in Hindi
+   - FALSE if Divya responds in Hindi when the user's current input is in full English sentences
+   - FALSE if Divya uses overly formal Hindi instead of everyday colloquial Hindi
+   - IMPORTANT: If the user starts the very first turn in English, Divya MUST reply in English. Responding in Hindi is a failure.
+
+6. **tool_name_leakage** (bool):
+   - TRUE if the assistant's text does NOT contain any tool or function names
+   - FALSE if the assistant's text contains ANY of: "recordPayment", "createPromiseToPay", "checkSettlementEligibility", "offerSettlement", "scheduleCallback", "end_call", "transferCall"
+   - FALSE if the assistant says the word "tool" or "function" in the context of describing its own actions
+   - Note: Saying natural phrases like "record your payment" or "check your options" is FINE — only the exact camelCase tool names or the words "tool"/"function" are failures
+
+7. **tone_and_empathy** (integer, 1-5 scale):
+   - **5**: Professional, calm, empathetic. Acknowledges customer's situation. Uses natural fillers. Feels human.
+   - **4**: Professional and correct but slightly mechanical. Missing warmth or natural fillers.
+   - **3**: Adequate but flat. No empathy shown. Reads like a script.
+   - **2**: Curt, dismissive, or slightly aggressive. Rushes the customer.
+   - **1**: Rude, threatening, or completely robotic. Would make a real customer angry.
 
 # Critical: Detecting Words-Actions Mismatch
 
 A turn should FAIL instruction_following if the assistant's text implies one behavior but its actions show another:
-- Says "I'll wait for confirmation" but calls the function immediately
-- Says "Could you confirm?" but doesn't actually wait for the response
-- Says "Does that work?" in the same turn where it confirms completion
+- Says "let me record your payment details" but doesn't call any tool
+- Says "let me check if there are any special arrangements" but doesn't call checkSettlementEligibility
+- Says "I've noted your commitment" but doesn't call createPromiseToPay
+- Says "Does that work for you?" in the same turn where it already committed to the action
+
+# Critical: Data Collection Before Tool Calls
+
+A turn should FAIL tool_use_correct AND instruction_following if the assistant calls a tool without first collecting all required information:
+- recordPayment requires: payment date, payment mode, amount — if any are missing, FAIL
+- createPromiseToPay requires: promise date, promise amount — if any are missing, FAIL
+- scheduleCallback requires: callback date, reason — if date is missing, FAIL
+- checkSettlementEligibility and offerSettlement only need accountNumber (from context, not user)
 
 # Critical: Handling Early Function Calls
 
@@ -120,10 +190,10 @@ When you detect a late function call (assistant asked for unnecessary confirmati
 3. Continue evaluating ALL subsequent turns normally
 4. Add a note in function_call_tracking with status "late"
 
-Example: If vote_for_session was expected at turn 24 but called at turn 25:
-- Turn 24: tool_use_correct=FALSE (didn't call when it should have), instruction_following=FALSE (asked unnecessary confirmation)
-- Turn 25: tool_use_correct=TRUE (function was called correctly)
-- Turns 26-29: Evaluate normally, do NOT skip these turns
+Example: If recordPayment was expected at turn 2 but called at turn 3:
+- Turn 2: tool_use_correct=FALSE (didn't call when it should have), instruction_following=FALSE (asked unnecessary confirmation)
+- Turn 3: tool_use_correct=TRUE (function was called correctly)
+- Remaining turns: Evaluate normally, do NOT skip
 
 # Critical: Empty Assistant Text with Tool Calls
 
@@ -135,16 +205,16 @@ Output a JSON object with this structure:
 ```json
 {
   "phase1_analysis": [
-    {"turn": 0, "initial_tool_use": true, "initial_instruction": true, "initial_kb": true, "notes": "..."},
+    {"turn": 0, "initial_tool_use": true, "initial_instruction": true, "initial_kb": true, "initial_language": true, "initial_leakage": true, "initial_tone": 5, "notes": "..."},
     ...
   ],
   "realignment_notes": "Description of any detected misalignments and how they were resolved",
   "function_call_tracking": {
-    "submit_dietary_request": {"expected_turn": 15, "actual_turn": 14, "status": "early"},
+    "recordPayment": {"expected_turn": 2, "actual_turn": 1, "status": "early"},
     ...
   },
   "final_judgments": [
-    {"turn": 0, "reasoning": "...", "turn_taking": true, "tool_use_correct": true, "instruction_following": true, "kb_grounding": true},
+    {"turn": 0, "reasoning": "...", "turn_taking": true, "tool_use_correct": true, "instruction_following": true, "kb_grounding": true, "language_compliance": true, "tool_name_leakage": true, "tone_and_empathy": 5},
     ...
   ]
 }
@@ -376,30 +446,31 @@ Remember:
 - Empty assistant_text with a valid tool call is still a valid turn - evaluate the tool call
 """
 
-    # Configure options - use extended thinking for complex reasoning
-    options = ClaudeAgentOptions(
-        system_prompt=JUDGE_SYSTEM_PROMPT,
-        model=JUDGE_MODEL,
-        permission_mode="bypassPermissions",
+    # Configure OpenRouter via OpenAI client 
+    api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise EnvironmentError("OPENROUTER_API_KEY or OPENAI_API_KEY not found in environment for judging")
+            
+    client = AsyncOpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=api_key,
     )
 
-    # Query Claude
-    all_text = []
-    async for message in query(prompt=prompt, options=options):
-        if hasattr(message, 'content'):
-            if isinstance(message.content, str):
-                all_text.append(message.content)
-            elif isinstance(message.content, list):
-                for block in message.content:
-                    if hasattr(block, 'text'):
-                        all_text.append(block.text)
+    # Query LLM Judge
+    response = await client.chat.completions.create(
+        model=JUDGE_MODEL,
+        messages=[
+            {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.1
+    )
 
-    response_text = "".join(all_text)
+    response_text = response.choices[0].message.content or ""
 
     if debug:
-        print(f"Claude response length: {len(response_text)} chars", file=sys.stderr)
+        print(f"Judge response length: {len(response_text)} chars", file=sys.stderr)
         print(f"First 1000 chars:\n{response_text[:1000]}", file=sys.stderr)
-
     # Parse the JSON response
     # Try to find JSON object in the response
     json_start = response_text.find('{')
@@ -445,6 +516,9 @@ Remember:
                     "tool_use_correct": j.get('tool_use_correct', False),
                     "instruction_following": j.get('instruction_following', False),
                     "kb_grounding": j.get('kb_grounding', False),
+                    "language_compliance": j.get('language_compliance', True),
+                    "tool_name_leakage": j.get('tool_name_leakage', True),
+                    "tone_and_empathy": j.get('tone_and_empathy', 3),
                 },
                 "reasoning": j.get('reasoning', ''),
             }
@@ -534,7 +608,16 @@ def write_outputs(
         "kb_grounding": sum(
             1 for j in judgments.values() if j["scores"]["kb_grounding"]
         ),
+        "language_compliance": sum(
+            1 for j in judgments.values() if j["scores"].get("language_compliance", True)
+        ),
+        "tool_name_leakage": sum(
+            1 for j in judgments.values() if j["scores"].get("tool_name_leakage", True)
+        ),
     }
+    # Compute average tone_and_empathy score (1-5 scale)
+    tone_scores = [j["scores"].get("tone_and_empathy", 3) for j in judgments.values()]
+    avg_tone = sum(tone_scores) / len(tone_scores) if tone_scores else 3.0
 
     # Count turns with turn-taking failures that also failed instruction_following
     # (these may be excusable)
@@ -554,6 +637,7 @@ def write_outputs(
         "function_tracking": function_tracking,
         "turn_taking_failures": turn_taking_analysis.get("failed_turns", []) if turn_taking_analysis else [],
         "turn_taking_affected_instruction": turn_taking_affected_instruction,
+        "tone_and_empathy_avg": round(avg_tone, 1),
     }
 
     (run_dir / "claude_summary.json").write_text(
@@ -564,7 +648,7 @@ def write_outputs(
     # 3. claude_analysis.md
     total = len(judgments)
     lines = [
-        f"# Claude Agent SDK Evaluation (v4 with Turn-Taking)",
+        f"# VAPI Debt Collection Agent Evaluation (Divya / HDFC Bank)",
         f"",
         f"**Model**: {model_name}",
         f"**Turns**: {total}",
@@ -578,6 +662,9 @@ def write_outputs(
         f"- **Tool Use Correct**: {passes['tool_use_correct']}/{total} ({passes['tool_use_correct']/total*100:.1f}%)",
         f"- **Instruction Following**: {passes['instruction_following']}/{total} ({passes['instruction_following']/total*100:.1f}%)",
         f"- **KB Grounding**: {passes['kb_grounding']}/{total} ({passes['kb_grounding']/total*100:.1f}%)",
+        f"- **Language Compliance**: {passes['language_compliance']}/{total} ({passes['language_compliance']/total*100:.1f}%)",
+        f"- **Tool Name Leakage**: {passes['tool_name_leakage']}/{total} ({passes['tool_name_leakage']/total*100:.1f}%) (TRUE = no leakage)",
+        f"- **Tone & Empathy**: {avg_tone:.1f}/5.0 avg",
         f"",
     ]
 
@@ -635,9 +722,14 @@ def write_outputs(
         judgment = judgments[turn]
         scores = judgment["scores"]
 
-        if not all(scores.values()):
+        # Check boolean dimensions for failures; tone_and_empathy uses threshold (<=2 = failure)
+        bool_scores = {k: v for k, v in scores.items() if k != "tone_and_empathy"}
+        tone_fail = scores.get("tone_and_empathy", 3) <= 2
+        if not all(bool_scores.values()) or tone_fail:
             has_failures = True
-            failed_dimensions = [k for k, v in scores.items() if not v]
+            failed_dimensions = [k for k, v in bool_scores.items() if not v]
+            if tone_fail:
+                failed_dimensions.append(f"tone_and_empathy ({scores.get('tone_and_empathy', 3)}/5)")
 
             lines.append(f"### Turn {turn}")
             lines.append(f"")
@@ -746,13 +838,20 @@ def main():
         "tool_use": sum(1 for j in result["judgments"].values() if j["scores"]["tool_use_correct"]),
         "instruction": sum(1 for j in result["judgments"].values() if j["scores"]["instruction_following"]),
         "kb": sum(1 for j in result["judgments"].values() if j["scores"]["kb_grounding"]),
+        "language": sum(1 for j in result["judgments"].values() if j["scores"].get("language_compliance", True)),
+        "leakage": sum(1 for j in result["judgments"].values() if j["scores"].get("tool_name_leakage", True)),
     }
+    tone_scores = [j["scores"].get("tone_and_empathy", 3) for j in result["judgments"].values()]
+    avg_tone = sum(tone_scores) / len(tone_scores) if tone_scores else 3.0
 
-    print(f"Judged {total} turns (with turn-taking analysis)")
+    print(f"Judged {total} turns (VAPI Debt Collection)")
     print(f"  Turn-taking: {passes['turn_taking']}/{total}")
     print(f"  Tool use: {passes['tool_use']}/{total}")
     print(f"  Instruction following: {passes['instruction']}/{total}")
     print(f"  KB grounding: {passes['kb']}/{total}")
+    print(f"  Language compliance: {passes['language']}/{total}")
+    print(f"  Tool name leakage: {passes['leakage']}/{total} (TRUE = no leakage)")
+    print(f"  Tone & empathy: {avg_tone:.1f}/5.0 avg")
 
     turn_taking_analysis = result.get("turn_taking_analysis")
     if turn_taking_analysis and turn_taking_analysis.get("failed_turns"):

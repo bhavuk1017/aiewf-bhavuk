@@ -76,12 +76,15 @@ class TextPipeline(BasePipeline):
         # Get system instruction from benchmark
         system_instruction = getattr(self.benchmark, "system_instruction", "")
 
-        # Initial messages: system + first user turn
+        # Initial messages: system + (optional) first assistant msg + first user turn
         first_turn = self._get_current_turn()
-        messages = [
-            {"role": "system", "content": system_instruction},
-            {"role": "user", "content": first_turn["input"]},
-        ]
+        messages = [{"role": "system", "content": system_instruction}]
+
+        first_message = getattr(self.benchmark, "first_message", None)
+        if first_message:
+            messages.append({"role": "assistant", "content": first_message})
+
+        messages.append({"role": "user", "content": first_turn["input"]})
 
         # Get tools schema from benchmark
         tools = getattr(self.benchmark, "tools_schema", None)
@@ -108,13 +111,20 @@ class TextPipeline(BasePipeline):
             if self.done:
                 return
 
-            # Extract assistant text from context
-            # context_aggregator.assistant() has already added the message
+            # Extract assistant text from context.
+            # When a tool call happens, the context ends with:
+            #   assistant(text) → assistant(tool_calls) → tool(result)
+            # So msgs[-1] is the tool result, not the preamble text.
+            # Scan backward to find the most recent assistant message
+            # with actual text content, stopping at the last user message.
             msgs = self.context.get_messages()
             assistant_text = ""
-            if msgs and msgs[-1].get("role") == "assistant":
-                content = msgs[-1].get("content", "")
-                assistant_text = content if isinstance(content, str) else ""
+            for m in reversed(msgs):
+                if m.get("role") == "user":
+                    break  # stop at the last user message boundary
+                if m.get("role") == "assistant" and m.get("content"):
+                    assistant_text = m["content"]
+                    break
 
             await self._on_turn_end(assistant_text)
 

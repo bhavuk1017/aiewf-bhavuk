@@ -59,6 +59,15 @@ class BasePipeline(ABC):
         self._seen_tool_calls: set = set()
         # Track tool_call_ids that are duplicates (for filtering in ToolCallRecorder)
         self._duplicate_tool_call_ids: set = set()
+        # Build function_name → response map from scenario turns
+        self._tool_response_map: Dict[str, Any] = {}
+        for turn in benchmark.turns:
+            fc = turn.get("required_function_call")
+            resp = turn.get("function_call_response")
+            if fc and resp is not None:
+                fn_name = fc["name"]
+                if fn_name not in self._tool_response_map:
+                    self._tool_response_map[fn_name] = resp
 
     @property
     def effective_turns(self) -> List[dict]:
@@ -141,11 +150,25 @@ class BasePipeline(ABC):
 
         # Handle OpenRouter (uses OpenAI-compatible API with different base URL and API key)
         if service_name_lower == "openrouter":
+            from pipecat.services.openai.llm import OpenAILLMService
             api_key = os.getenv("OPENROUTER_API_KEY")
             if not api_key:
                 raise EnvironmentError("OPENROUTER_API_KEY environment variable is required")
             kwargs["api_key"] = api_key
             kwargs["base_url"] = "https://openrouter.ai/api/v1"
+            
+            # Extract config variables from benchmark
+            temp = getattr(self.benchmark, "vapi_temperature", None)
+            max_tokens = getattr(self.benchmark, "vapi_max_tokens", None)
+            
+            if temp is not None or max_tokens is not None:
+                params_kwargs = {}
+                if temp is not None:
+                    params_kwargs["temperature"] = temp
+                if max_tokens is not None:
+                    params_kwargs["max_tokens"] = max_tokens
+                kwargs["params"] = OpenAILLMService.InputParams(**params_kwargs)
+                
             logger.info(f"Using OpenRouter with base_url={kwargs['base_url']}")
             return service_class(**kwargs)
 
@@ -296,7 +319,18 @@ class BasePipeline(ABC):
         # Track this call
         self._seen_tool_calls.add(call_key)
 
-        result = {"status": "success"}
+        # Look up the scenario-defined response by function name
+        result = self._tool_response_map.get(params.function_name)
+
+        if result is not None:
+            logger.info(f"Returning scenario-defined response for {params.function_name}: {result}")
+        else:
+            result = {"status": "success"}
+            logger.warning(
+                f"No function_call_response defined for {params.function_name}, "
+                f"returning default"
+            )
+
         await params.result_callback(result)
 
         # end_session tool: gracefully terminate
