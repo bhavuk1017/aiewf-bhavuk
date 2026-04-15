@@ -38,11 +38,19 @@ scenario_1_payment_done = [
         ),
         "required_function_call": None,
     },
-    # Turn 2 – User gives exact amount
+    # Turn 2 – User gives exact amount; agent confirms details
     {
         "input": "Poore 12000 rupaye.",
         "golden_text": (
-            "Let me quickly record these payment details in our system... "
+            "Toh confirm karu — aapne 5th March ko UPI se twelve thousand rupees pay kiye. Sahi hai?"
+        ),
+        "required_function_call": None,
+    },
+    # Turn 3 – User confirms; agent records payment
+    {
+        "input": "Haan, sahi hai.",
+        "golden_text": (
+            "Aapki payment details record kar leti hoon... "
             "Aapki payment details record ho gayi hain. "
             "Yeh 1-3 business days mein system mein reflect ho jaayegi."
         ),
@@ -57,7 +65,7 @@ scenario_1_payment_done = [
         },
         "function_call_response": {"status": "success", "message": "Payment recorded."},
     },
-    # Turn 3 – User acknowledges; agent closes call
+    # Turn 4 – User acknowledges; agent closes call
     {
         "input": "Theek hai, shukriya.",
         "golden_text": (
@@ -105,12 +113,21 @@ scenario_2_promise_to_pay = [
         ),
         "required_function_call": None,
     },
-    # Turn 3 – User confirms amount and mode
+    # Turn 3 – User confirms amount and mode; agent repeats for confirmation
     {
         "input": "हाँ, पूरे 12000. UPI से करूँगा।",
         "golden_text": (
-            "Let me set up this payment commitment for you... "
             "तो confirm करूँ — आप twelve thousand rupees, 14th March को UPI से pay करेंगे। सही है?"
+        ),
+        "required_function_call": None,
+    },
+    # Turn 4 – User confirms; agent triggers tool and closes
+    {
+        "input": "हाँ सही है।",
+        "golden_text": (
+            "आपकी payment commitment set up कर देती हूँ... "
+            "बहुत अच्छा, Chintan जी। आपका commitment record हो गया है। "
+            "आपका time देने के लिए धन्यवाद। Have a good day!"
         ),
         "required_function_call": {
             "name": "createPromiseToPay",
@@ -118,25 +135,16 @@ scenario_2_promise_to_pay = [
                 "accountNumber": "123456789",
                 "promiseDate": "2026-03-14",
                 "promiseAmount": 12000,
+                "paymentMode": "upi",
             },
         },
         "function_call_response": {"status": "success", "message": "Promise to pay recorded."},
     },
-    # Turn 4 – User confirms; agent closes
-    {
-        "input": "हाँ सही है।",
-        "golden_text": (
-            "बहुत अच्छा, Chintan जी। आपको SMS से payment instructions मिल जाएँगे। "
-            "आपका time देने के लिए धन्यवाद। Have a good day!"
-        ),
-        "required_function_call": None,
-    },
 ]
 
 # =============================================================================
-# SCENARIO 3 — Refusal → Settlement Offer → Promise to Pay
-# Flow: Greeting → Reason → Refuse to Pay → checkSettlement → offerSettlement
-#        → Promise to Pay → Call Closing
+# SCENARIO 3 — Refusal → Human Handoff for Settlement
+# Flow: Greeting → Reason → Refuse to Pay → transferCall (settlement)
 # =============================================================================
 
 scenario_3_settlement = [
@@ -157,68 +165,28 @@ scenario_3_settlement = [
         "input": "I lost my job last month. I honestly can't pay right now.",
         "golden_text": (
             "I'm really sorry to hear that, Chintan — that is a very tough situation. "
-            "Since you're only four days overdue, there's no CIBIL impact yet, "
+            "Since you're within the first 30 days overdue, there's no credit impact yet, "
             "but a late fee may apply. "
-            "Let me check if there are any special arrangements we can offer you..."
-        ),
-        "required_function_call": {
-            "name": "checkSettlementEligibility",
-            "args": {"accountNumber": "123456789"},
-        },
-        "function_call_response": {"eligible": True, "message": "Account qualifies for OTS."},
-    },
-    # Turn 2 – Agent triggers offerSettlement after eligibility confirmed
-    {
-        "input": "Okay, what does that mean?",
-        "golden_text": (
-            "I have good news — we can offer you a settlement option. "
-            "Let me pull up the details for you..."
-        ),
-        "required_function_call": {
-            "name": "offerSettlement",
-            "args": {"accountNumber": "123456789"},
-        },
-        "function_call_response": {
-            "settlementAmount": 9600,
-            "discountPercentage": 20,
-            "deadline": "2026-04-07",
-        },
-    },
-    # Turn 3 – Agent presents offer; user accepts
-    {
-        "input": "Nine thousand six hundred? That's a good deal. I can do that by end of this month.",
-        "golden_text": (
-            "That's great, Chintan! Let me set up this payment commitment for you — "
-            "nine thousand six hundred rupees by end of March. "
-            "May I know the exact date?"
+            "Would you be able to pay even a partial amount for now?"
         ),
         "required_function_call": None,
     },
-    # Turn 4 – User gives date; agent creates PTP
+    # Turn 2 – User insists they can't pay anything; asks about settlement
     {
-        "input": "Let's say 31st March.",
+        "input": "No, I really can't pay anything right now. Is there any way to settle for less?",
         "golden_text": (
-            "Let me set up this payment commitment for you... "
-            "So to confirm — you'll pay nine thousand six hundred rupees by 31st March. Correct?"
+            "I understand, Chintan. For settlement options, "
+            "I'll connect you with our team who can discuss "
+            "the best arrangement for your situation..."
         ),
         "required_function_call": {
-            "name": "createPromiseToPay",
+            "name": "transferCall",
             "args": {
                 "accountNumber": "123456789",
-                "promiseDate": "2026-03-31",
-                "promiseAmount": 9600,
+                "reason": "settlement_request",
             },
         },
-        "function_call_response": {"status": "success", "message": "Promise to pay recorded."},
-    },
-    # Turn 5 – User confirms; agent closes
-    {
-        "input": "Yes, that's correct.",
-        "golden_text": (
-            "Wonderful! You'll receive an SMS with payment instructions. "
-            "Thank you so much for your time, Chintan. Have a great day!"
-        ),
-        "required_function_call": None,
+        "function_call_response": {"status": "transferred"},
     },
 ]
 
@@ -298,7 +266,7 @@ scenario_family_emergency_extension_request = [
     },
     # Turn 2 – User asks for extension
     {
-        "input": "मुझे थोड़ा time चाहिए, शायद 10-12 दिन लग जाएंगे manage करने में।",
+        "input": "मुझे थोड़ा time चाहिए, शायद 10-12 दिन लग जाएंगे। आप मुझे 18 March को सुबह 11 बजे call कर लेना।",
         "golden_text": (
             "ठीक है Chintan जी, मैं समझ सकती हूँ कि आपको थोड़ा extra time चाहिए। "
             "I'll schedule a callback for you... "
@@ -317,34 +285,35 @@ scenario_family_emergency_extension_request = [
             "status": "scheduled"
         }
     },
-    # Turn 3 – User later commits to partial payment
+    # Turn 3 – User later commits to partial payment; agent confirms details
     {
-        "input": "ठीक है, मैं 18 March को 6000 दे दूंगा पहले, बाकी बाद में।",
+        "input": "ठीक है, मैं 18 March को 6000 UPI से दे दूंगा पहले, बाकी बाद में।",
         "golden_text": (
-            "Let me set up this payment commitment for you... "
-            "तो confirm करूँ — आप 6,000 रुपये 18th March को pay करेंगे। सही है?"
+            "तो confirm करूँ — आप 6,000 रुपये 18th March को UPI से pay करेंगे। सही है?"
+        ),
+        "required_function_call": None,
+    },
+    # Turn 4 – User confirms; agent triggers tool and closes
+    {
+        "input": "हाँ, सही है।",
+        "golden_text": (
+            "आपकी payment commitment set up कर देती हूँ... "
+            "ठीक है Chintan जी, आपका commitment note कर लिया गया है। "
+            "कृपया ensure करें कि payment time पर हो जाए ताकि आगे charges avoid हो सकें। "
+            "धन्यवाद, आपका दिन शुभ हो।"
         ),
         "required_function_call": {
             "name": "createPromiseToPay",
             "args": {
                 "accountNumber": "123456789",
                 "promiseDate": "2026-03-18",
-                "promiseAmount": 6000
+                "promiseAmount": 6000,
+                "paymentMode": "upi"
             }
         },
         "function_call_response": {
             "status": "success"
         }
-    },
-    # Turn 4 – Call closing
-    {
-        "input": "हाँ, सही है।",
-        "golden_text": (
-            "ठीक है Chintan जी, आपका commitment note कर लिया गया है। "
-            "कृपया ensure करें कि payment time पर हो जाए ताकि आगे charges avoid हो सकें। "
-            "धन्यवाद, आपका दिन शुभ हो।"
-        ),
-        "required_function_call": None,
     }
 ]
 
@@ -431,12 +400,22 @@ scenario_payment_dispute_verification = [
         ),
         "required_function_call": None,
     },
-    # Turn 2 – User provides details
+    # Turn 2 – User provides details; agent confirms
     {
         "input": "मैंने 3 March को UPI से पूरे 12000 रुपये pay किए थे।",
         "golden_text": (
-            "Let me quickly record these payment details in our system... "
             "तो confirm करूँ — आपने 3rd March को UPI से 12,000 रुपये का payment किया है, सही है?"
+        ),
+        "required_function_call": None,
+    },
+    # Turn 3 – User confirms; agent records and user gets defensive
+    {
+        "input": "हाँ बिल्कुल सही है, फिर भी आप लोग बार-बार क्यों call कर रहे हो?",
+        "golden_text": (
+            "आपकी payment details record कर लेती हूँ... "
+            "समझ सकती हूँ Chintan जी, ऐसा होने पर frustration होता है। "
+            "कभी-कभी payment reflect होने में 1-3 business days लग सकते हैं, इसलिए cross-check करना जरूरी होता है। "
+            "मैं ensure करूँगी कि आपके details verify हो जाएं और unnecessary calls ना आएं।"
         ),
         "required_function_call": {
             "name": "recordPayment",
@@ -450,16 +429,6 @@ scenario_payment_dispute_verification = [
         "function_call_response": {
             "status": "pending_verification"
         }
-    },
-    # Turn 3 – User gets defensive
-    {
-        "input": "हाँ बिल्कुल सही है, फिर भी आप लोग बार-बार क्यों call कर रहे हो?",
-        "golden_text": (
-            "समझ सकती हूँ Chintan जी, ऐसा होने पर frustration होता है। "
-            "कभी-कभी payment reflect होने में 1-3 business days लग सकते हैं, इसलिए cross-check करना जरूरी होता है। "
-            "मैं ensure करूँगी कि आपके details verify हो जाएं और unnecessary calls ना आएं।"
-        ),
-        "required_function_call": None,
     },
     # Turn 4 – User insists issue should be resolved
     {
@@ -584,34 +553,35 @@ scenario_user_questions_authenticity = [
         ),
         "required_function_call": None,
     },
-    # Turn 3 – User commits to pay
+    # Turn 3 – User commits to pay; agent confirms details
     {
         "input": "मैं 10 March को पूरा payment कर दूंगा, online करूँगा।",
         "golden_text": (
-            "Let me set up this payment commitment for you... "
             "तो confirm करूँ — आप 12,000 रुपये 10th March को online pay करेंगे। सही है?"
+        ),
+        "required_function_call": None,
+    },
+    # Turn 4 – User confirms; agent triggers tool and closes
+    {
+        "input": "हाँ सही है।",
+        "golden_text": (
+            "आपकी payment commitment set up कर देती हूँ... "
+            "ठीक है Chintan जी, आपका payment commitment note कर लिया गया है। "
+            "कृपया ensure करें कि payment time पर हो जाए ताकि आगे charges avoid हो सकें। "
+            "धन्यवाद, आपका दिन शुभ हो।"
         ),
         "required_function_call": {
             "name": "createPromiseToPay",
             "args": {
                 "accountNumber": "123456789",
                 "promiseDate": "2026-03-10",
-                "promiseAmount": 12000
+                "promiseAmount": 12000,
+                "paymentMode": "online"
             }
         },
         "function_call_response": {
             "status": "success"
         }
-    },
-    # Turn 4 – Call closing
-    {
-        "input": "हाँ सही है।",
-        "golden_text": (
-            "ठीक है Chintan जी, आपका payment commitment note कर लिया गया है। "
-            "कृपया ensure करें कि payment time पर हो जाए ताकि आगे charges avoid हो सकें। "
-            "धन्यवाद, आपका दिन शुभ हो।"
-        ),
-        "required_function_call": None,
     }
 ]
 
@@ -641,34 +611,35 @@ scenario_user_agrees_immediate_payment = [
         ),
         "required_function_call": None,
     },
-    # Turn 2 – User agrees to pay immediately
+    # Turn 2 – User agrees to pay immediately; agent confirms details
     {
-        "input": "हाँ, मैं अभी तुरंत payment कर देता हूँ UPI से।",
+        "input": "हाँ, मैं अभी तुरंत पूरे 12000 का payment कर देता हूँ UPI से।",
         "golden_text": (
-            "Let me set up this payment commitment for you... "
             "तो confirm करूँ — आप 12,000 रुपये आज, 7th March को UPI से pay कर रहे हैं। सही है?"
+        ),
+        "required_function_call": None,
+    },
+    # Turn 3 – User confirms; agent triggers tool and closes
+    {
+        "input": "हाँ, अभी कर रहा हूँ।",
+        "golden_text": (
+            "आपकी payment commitment set up कर देती हूँ... "
+            "ठीक है Chintan जी, धन्यवाद for your prompt action। "
+            "कृपया ensure करें कि payment successful हो जाए, और 1-3 business days में system में reflect हो जाएगा। "
+            "धन्यवाद, आपका दिन शुभ हो।"
         ),
         "required_function_call": {
             "name": "createPromiseToPay",
             "args": {
                 "accountNumber": "123456789",
                 "promiseDate": "2026-03-07",
-                "promiseAmount": 12000
+                "promiseAmount": 12000,
+                "paymentMode": "upi"
             }
         },
         "function_call_response": {
             "status": "success"
         }
-    },
-    # Turn 3 – User confirms
-    {
-        "input": "हाँ, अभी कर रहा हूँ।",
-        "golden_text": (
-            "ठीक है Chintan जी, धन्यवाद for your prompt action। "
-            "कृपया ensure करें कि payment successful हो जाए, और 1-3 business days में system में reflect हो जाएगा। "
-            "धन्यवाद, आपका दिन शुभ हो।"
-        ),
-        "required_function_call": None,
     }
 ]
 
@@ -703,64 +674,18 @@ scenario_customer_disputes_amount_and_penalties = [
         "input": "नहीं, और जब तक सही amount नहीं बताओगे मैं payment नहीं करूँगा।",
         "golden_text": (
             "ठीक है Chintan जी, आपकी बात समझ में आती है। "
-            "Let me check if there are any special arrangements we can offer..."
+            "मैं आपको अपने colleague से connect कर देती हूँ जो amount details verify करके "
+            "आपकी concern resolve कर सकते हैं..."
         ),
         "required_function_call": {
-            "name": "checkSettlementEligibility",
-            "args": {
-                "accountNumber": "123456789"
-            }
-        },
-        "function_call_response": {
-            "eligible": True
-        }
-    },
-    # Turn 3 – Agent offers settlement
-    {
-        "input": "क्या option है?",
-        "golden_text": (
-            "I have good news - we can offer you a settlement option... "
-            "आप reduced amount में इस loan को close कर सकते हैं, जिससे आगे के charges भी avoid हो जाएंगे। "
-            "क्या आप settlement option consider करना चाहेंगे?"
-        ),
-        "required_function_call": {
-            "name": "offerSettlement",
-            "args": {
-                "accountNumber": "123456789"
-            }
-        },
-        "function_call_response": {
-            "settlementAmount": 8500
-        }
-    },
-    # Turn 4 – User asks for time
-    {
-        "input": "मुझे थोड़ा time चाहिए सोचने के लिए।",
-        "golden_text": (
-            "ठीक है Chintan जी, मैं समझ सकती हूँ कि आपको time चाहिए। "
-            "I'll schedule a callback for you... "
-            "आपको कब call करना convenient रहेगा ताकि हम इस पर आगे बात कर सकें?"
-        ),
-        "required_function_call": None,
-    },
-    # Turn 5 – User provides callback time
-    {
-        "input": "कल शाम 5 बजे call कर लेना।",
-        "golden_text": (
-            "I'll schedule a callback for you... "
-            "तो confirm करूँ — मैं आपको 8th March को शाम 5 बजे call करूँगी।"
-        ),
-        "required_function_call": {
-            "name": "scheduleCallback",
+            "name": "transferCall",
             "args": {
                 "accountNumber": "123456789",
-                "callbackDate": "2026-03-08",
-                "callbackTime": "5:00 PM",
-                "reason": "Customer wants time to consider settlement due to dispute on amount"
+                "reason": "settlement_request"
             }
         },
         "function_call_response": {
-            "status": "scheduled"
+            "status": "transferred"
         }
     }
 ]
@@ -791,54 +716,56 @@ scenario_payment_failed_insufficient_funds = [
         ),
         "required_function_call": None,
     },
-    # Turn 2 – User agrees to partial immediate payment
+    # Turn 2 – User agrees to partial immediate payment; agent confirms
     {
-        "input": "अभी मेरे पास 5000 हैं, बाकी बाद में दे दूंगा।",
+        "input": "अभी मेरे पास 5000 हैं, UPI से दे देता हूँ, बाकी बाद में दे दूंगा।",
         "golden_text": (
             "ठीक है Chintan जी, partial payment भी helpful रहेगा। "
-            "Let me set up this payment commitment for you... "
-            "तो confirm करूँ — आप 5,000 रुपये आज, 7th March को pay करेंगे। सही है?"
+            "तो confirm करूँ — आप 5,000 रुपये आज, 7th March को UPI से pay करेंगे। सही है?"
+        ),
+        "required_function_call": None,
+    },
+    # Turn 3 – User confirms first payment; provides second commitment
+    {
+        "input": "हाँ, और बाकी 7000 मैं 15 March को UPI से ही दे दूंगा।",
+        "golden_text": (
+            "आपकी payment commitment set up कर देती हूँ... "
+            "तो confirm करूँ — आप बाकी 7,000 रुपये 15th March को UPI से pay करेंगे। सही है?"
         ),
         "required_function_call": {
             "name": "createPromiseToPay",
             "args": {
                 "accountNumber": "123456789",
                 "promiseDate": "2026-03-07",
-                "promiseAmount": 5000
+                "promiseAmount": 5000,
+                "paymentMode": "upi"
             }
         },
         "function_call_response": {
             "status": "success"
         }
     },
-    # Turn 3 – User commits for remaining amount later
+    # Turn 4 – User confirms second; agent triggers second tool and closes
     {
-        "input": "हाँ, और बाकी 7000 मैं 15 March को दे दूंगा।",
+        "input": "हाँ सही है।",
         "golden_text": (
-            "Let me set up this payment commitment for you... "
-            "तो confirm करूँ — आप बाकी 7,000 रुपये 15th March को pay करेंगे। सही है?"
+            "आपकी दूसरी payment commitment भी set up कर देती हूँ... "
+            "ठीक है Chintan जी, आपका दोनों payments का commitment note कर लिया गया है। "
+            "कृपया ensure करें कि payments time पर हो जाएं ताकि आगे charges avoid हो सकें। "
+            "धन्यवाद, आपका दिन शुभ हो।"
         ),
         "required_function_call": {
             "name": "createPromiseToPay",
             "args": {
                 "accountNumber": "123456789",
                 "promiseDate": "2026-03-15",
-                "promiseAmount": 7000
+                "promiseAmount": 7000,
+                "paymentMode": "upi"
             }
         },
         "function_call_response": {
             "status": "success"
         }
-    },
-    # Turn 4 – Call closing
-    {
-        "input": "हाँ सही है।",
-        "golden_text": (
-            "ठीक है Chintan जी, आपका दोनों payments का commitment note कर लिया गया है। "
-            "कृपया ensure करें कि payments time पर हो जाएं ताकि आगे charges avoid हो सकें। "
-            "धन्यवाद, आपका दिन शुभ हो।"
-        ),
-        "required_function_call": None,
     }
 ]
 
@@ -878,35 +805,36 @@ scenario_payment_channel_issue_app_not_working = [
         ),
         "required_function_call": None,
     },
-    # Turn 3 – User agrees to pay later
+    # Turn 3 – User agrees to pay later; agent confirms
     {
-        "input": "आज नहीं हो पाएगा, मैं कल try करूँगा।",
+        "input": "आज नहीं हो पाएगा, मैं कल 8 March को पूरे 12000 UPI से try करूँगा।",
         "golden_text": (
             "ठीक है Chintan जी। "
-            "Let me set up this payment commitment for you... "
-            "तो confirm करूँ — आप 12,000 रुपये 8th March को pay करेंगे। सही है?"
+            "तो confirm करूँ — आप 12,000 रुपये 8th March को UPI से pay करेंगे। सही है?"
+        ),
+        "required_function_call": None,
+    },
+    # Turn 4 – User confirms; agent triggers tool and closes
+    {
+        "input": "हाँ, कल कर दूंगा।",
+        "golden_text": (
+            "आपकी payment commitment set up कर देती हूँ... "
+            "ठीक है Chintan जी, आपका payment commitment note कर लिया गया है। "
+            "कृपया ensure करें कि payment time पर हो जाए ताकि आगे charges avoid हो सकें। "
+            "धन्यवाद, आपका दिन शुभ हो।"
         ),
         "required_function_call": {
             "name": "createPromiseToPay",
             "args": {
                 "accountNumber": "123456789",
                 "promiseDate": "2026-03-08",
-                "promiseAmount": 12000
+                "promiseAmount": 12000,
+                "paymentMode": "upi"
             }
         },
         "function_call_response": {
             "status": "success"
         }
-    },
-    # Turn 4 – Call closing
-    {
-        "input": "हाँ, कल कर दूंगा।",
-        "golden_text": (
-            "ठीक है Chintan जी, आपका payment commitment note कर लिया गया है। "
-            "कृपया ensure करें कि payment time पर हो जाए ताकि आगे charges avoid हो सकें। "
-            "धन्यवाद, आपका दिन शुभ हो।"
-        ),
-        "required_function_call": None,
     }
 ]
 
@@ -929,7 +857,7 @@ scenario_X_multiple_missed_emis_escalation = [
         "input": "नहीं, अभी नहीं किया। पिछले महीने भी नहीं कर पाया था।",
         "golden_text": (
             "अच्छा… Chintan जी, मैं समझ सकती हूँ लेकिन लगातार payments miss होने से concern बढ़ जाता है। "
-            "अभी तक 4 दिन overdue है इसलिए credit impact नहीं हुआ है, लेकिन late fees और आगे risk बढ़ सकता है। "
+            "अभी 6 दिन overdue है इसलिए credit impact नहीं हुआ है, लेकिन late fees और आगे risk बढ़ सकता है। "
             "आप बता सकते हैं कि अभी payment क्यों नहीं हो पा रही है?"
         ),
         "required_function_call": None,
@@ -944,74 +872,21 @@ scenario_X_multiple_missed_emis_escalation = [
         "required_function_call": None,
     },
     {
-        "input": "नहीं, अभी तो कुछ भी नहीं दे सकता।",
+        "input": "नहीं, अभी तो कुछ भी नहीं दे सकता। कोई settlement type option हो तो बताइए।",
         "golden_text": (
-            "ठीक है… अगर आप अभी payment नहीं कर पा रहे हैं, तो मैं check कर लेती हूँ कि क्या कोई special arrangement possible है। "
-            "Let me check if there are any special arrangements we can offer..."
+            "ठीक है Chintan जी, settlement ke liye mujhe aapko humare team se connect karna hoga "
+            "jo aapko better guide kar sakenge..."
         ),
         "required_function_call": {
-            "name": "checkSettlementEligibility",
-            "args": {
-                "accountNumber": "123456789"
-            }
-        },
-        "function_call_response": {
-            "status": "eligible"
-        }
-    },
-    {
-        "input": "अगर कुछ कम करके settle हो जाए तो बताइए।",
-        "golden_text": (
-            "I have good news - we can offer you a settlement option... "
-            "तो Chintan जी, आपके लिए एक settlement option available है जिससे आप reduced amount में account close कर सकते हैं। "
-            "क्या आप इस option को consider करना चाहेंगे?"
-        ),
-        "required_function_call": {
-            "name": "offerSettlement",
-            "args": {
-                "accountNumber": "123456789"
-            }
-        },
-        "function_call_response": {
-            "status": "offered",
-            "settlementAmount": 8000
-        }
-    },
-    {
-        "input": "हाँ, लेकिन अभी तुरंत नहीं कर पाऊंगा, 10-12 दिन लगेंगे।",
-        "golden_text": (
-            "ठीक है… Chintan जी, settlement option limited time के लिए valid होता है। "
-            "अगर आप commitment दे सकें तो मैं note कर सकती हूँ। "
-            "आप किस date तक payment कर पाएंगे?"
-        ),
-        "required_function_call": None,
-    },
-    {
-        "input": "20 मार्च तक कर दूंगा।",
-        "golden_text": (
-            "Let me set up this payment commitment for you... "
-            "तो confirm करूँ — आप settlement amount pay करेंगे 20th March को। सही है?"
-        ),
-        "required_function_call": {
-            "name": "createPromiseToPay",
+            "name": "transferCall",
             "args": {
                 "accountNumber": "123456789",
-                "promiseDate": "2026-03-20",
-                "promiseAmount": 8000
+                "reason": "settlement_request"
             }
         },
         "function_call_response": {
-            "status": "success"
+            "status": "transferred"
         }
-    },
-    {
-        "input": "हाँ, सही है।",
-        "golden_text": (
-            "ठीक है Chintan जी, आपका commitment successfully record हो गया है। "
-            "कृपया 20th March तक payment कर दीजिए ताकि आगे कोई additional action ना लेना पड़े। "
-            "धन्यवाद, आपका दिन शुभ रहे।"
-        ),
-        "required_function_call": None,
     }
 ]
 
@@ -1068,29 +943,30 @@ scenario_X_final_warning_before_legal_escalation = [
     {
         "input": "पूरा 12000, UPI से 10 मार्च तक कर दूंगा।",
         "golden_text": (
-            "Let me set up this payment commitment for you... "
             "तो confirm करूँ — आप twelve thousand rupees, 10th March को UPI से pay करेंगे। सही है?"
+        ),
+        "required_function_call": None,
+    },
+    {
+        "input": "हाँ, सही है।",
+        "golden_text": (
+            "आपकी payment commitment set up कर देती हूँ... "
+            "ठीक है Chintan जी, आपका payment commitment successfully record हो गया है। "
+            "कृपया 10th March तक payment कर दीजिए ताकि आगे कोई escalation ना हो। "
+            "धन्यवाद, आपका दिन शुभ रहे।"
         ),
         "required_function_call": {
             "name": "createPromiseToPay",
             "args": {
                 "accountNumber": "123456789",
                 "promiseDate": "2026-03-10",
-                "promiseAmount": 12000
+                "promiseAmount": 12000,
+                "paymentMode": "upi"
             }
         },
         "function_call_response": {
             "status": "success"
         }
-    },
-    {
-        "input": "हाँ, सही है।",
-        "golden_text": (
-            "ठीक है Chintan जी, आपका payment commitment successfully record हो गया है। "
-            "कृपया 10th March तक payment कर दीजिए ताकि आगे कोई escalation ना हो। "
-            "धन्यवाद, आपका दिन शुभ रहे।"
-        ),
-        "required_function_call": None,
     }
 ]
 
@@ -1129,29 +1005,30 @@ scenario_X_salary_not_credited_delay = [
     {
         "input": "पूरा amount 12000, 10 मार्च तक कर दूंगा UPI से।",
         "golden_text": (
-            "Let me set up this payment commitment for you... "
             "तो confirm करूँ — आप twelve thousand rupees, 10th March को UPI से pay करेंगे। सही है?"
+        ),
+        "required_function_call": None,
+    },
+    {
+        "input": "हाँ, सही है।",
+        "golden_text": (
+            "आपकी payment commitment set up कर देती हूँ... "
+            "ठीक है Chintan जी, आपका payment commitment successfully record हो गया है। "
+            "कृपया 10th March तक payment कर दीजिए ताकि late charges आगे ना बढ़ें। "
+            "धन्यवाद, आपका दिन शुभ रहे।"
         ),
         "required_function_call": {
             "name": "createPromiseToPay",
             "args": {
                 "accountNumber": "123456789",
                 "promiseDate": "2026-03-10",
-                "promiseAmount": 12000
+                "promiseAmount": 12000,
+                "paymentMode": "upi"
             }
         },
         "function_call_response": {
             "status": "success"
         }
-    },
-    {
-        "input": "हाँ, सही है।",
-        "golden_text": (
-            "ठीक है Chintan जी, आपका payment commitment successfully record हो गया है। "
-            "कृपया 10th March तक payment कर दीजिए ताकि late charges आगे ना बढ़ें। "
-            "धन्यवाद, आपका दिन शुभ रहे।"
-        ),
-        "required_function_call": None,
     }
 ]
 
@@ -1188,31 +1065,32 @@ scenario_X_technical_glitch_payment_failure = [
         "required_function_call": None,
     },
     {
-        "input": "आज शाम तक कर दूंगा UPI से।",
+        "input": "आज शाम तक पूरा 12000 कर दूंगा UPI से।",
         "golden_text": (
-            "Let me set up this payment commitment for you... "
             "तो confirm करूँ — आप twelve thousand rupees, 7th March को UPI से pay करेंगे। सही है?"
+        ),
+        "required_function_call": None,
+    },
+    {
+        "input": "हाँ, सही है।",
+        "golden_text": (
+            "आपकी payment commitment set up कर देती हूँ... "
+            "ठीक है Chintan जी, आपका payment commitment successfully record हो गया है। "
+            "कृपया आज ही payment complete कर दीजिए ताकि further charges avoid हो सकें। "
+            "धन्यवाद, आपका दिन शुभ रहे।"
         ),
         "required_function_call": {
             "name": "createPromiseToPay",
             "args": {
                 "accountNumber": "123456789",
                 "promiseDate": "2026-03-07",
-                "promiseAmount": 12000
+                "promiseAmount": 12000,
+                "paymentMode": "upi"
             }
         },
         "function_call_response": {
             "status": "success"
         }
-    },
-    {
-        "input": "हाँ, सही है।",
-        "golden_text": (
-            "ठीक है Chintan जी, आपका payment commitment successfully record हो गया है। "
-            "कृपया आज ही payment complete कर दीजिए ताकि further charges avoid हो सकें। "
-            "धन्यवाद, आपका दिन शुभ रहे।"
-        ),
-        "required_function_call": None,
     }
 ]
 
@@ -1242,8 +1120,15 @@ scenario_X_payment_deducted_but_status_failed = [
     {
         "input": "5 March को UPI से 12000 रुपये किया था।",
         "golden_text": (
-            "Let me quickly record these payment details in our system... "
-            "तो confirm करूँ — आपने 5th March को UPI से twelve thousand rupees pay किया है। "
+            "तो confirm करूँ — आपने 5th March को UPI से twelve thousand rupees pay किया है। सही है?"
+        ),
+        "required_function_call": None,
+    },
+    {
+        "input": "हाँ, सही है।",
+        "golden_text": (
+            "आपकी payment details record कर लेती हूँ... "
+            "आपकी payment details record हो गई हैं। "
             "ये details 1–3 working days में reflect हो जानी चाहिए।"
         ),
         "required_function_call": {
@@ -1312,27 +1197,28 @@ scenario_X_app_crash_during_payment = [
     {
         "input": "10 March तक कर दूंगा, online ही करूँगा।",
         "golden_text": (
-            "Let me set up this payment commitment for you... "
             "तो confirm करूँ — आप twelve thousand rupees, 10th March को online mode से pay करेंगे। सही है?"
+        ),
+        "required_function_call": None,
+    },
+    {
+        "input": "हाँ सही है।",
+        "golden_text": (
+            "आपकी payment commitment set up कर देती हूँ... "
+            "ठीक है Chintan जी, धन्यवाद for confirming। "
+            "कृपया ensure कर लीजिए कि payment 10th March तक हो जाए ताकि आगे कोई charges न लगे। "
+            "Have a good day!"
         ),
         "required_function_call": {
             "name": "createPromiseToPay",
             "args": {
                 "accountNumber": "123456789",
                 "promiseDate": "2026-03-10",
-                "promiseAmount": 12000
+                "promiseAmount": 12000,
+                "paymentMode": "online"
             }
         },
         "function_call_response": {"status": "success"}
-    },
-    {
-        "input": "हाँ सही है।",
-        "golden_text": (
-            "ठीक है Chintan जी, धन्यवाद for confirming। "
-            "कृपया ensure कर लीजिए कि payment 10th March तक हो जाए ताकि आगे कोई charges न लगे। "
-            "Have a good day!"
-        ),
-        "required_function_call": None,
     }
 ]
 
@@ -1369,29 +1255,30 @@ scenario_X_otp_not_received = [
         "required_function_call": None,
     },
     {
-        "input": "आज शाम तक try करूँगा, अगर OTP आया तो कर दूँगा।",
+        "input": "आज शाम तक पूरे 12000 UPI से pay करने का try करूँगा, अगर OTP आया तो कर दूँगा।",
         "golden_text": (
-            "Let me set up this payment commitment for you... "
-            "तो confirm करूँ — आप twelve thousand rupees आज, 7th March को payment करने की कोशिश करेंगे। सही है?"
+            "तो confirm करूँ — आप twelve thousand rupees आज, 7th March को UPI से payment करने की कोशिश करेंगे। सही है?"
+        ),
+        "required_function_call": None,
+    },
+    {
+        "input": "हाँ सही है।",
+        "golden_text": (
+            "आपकी payment commitment set up कर देती हूँ... "
+            "ठीक है Chintan जी, धन्यवाद for confirming। "
+            "कृपया ensure कर लीजिए कि आज payment complete हो जाए ताकि late charges avoid हो सके। "
+            "Have a good day!"
         ),
         "required_function_call": {
             "name": "createPromiseToPay",
             "args": {
                 "accountNumber": "123456789",
                 "promiseDate": "2026-03-07",
-                "promiseAmount": 12000
+                "promiseAmount": 12000,
+                "paymentMode": "upi"
             }
         },
         "function_call_response": {"status": "success"}
-    },
-    {
-        "input": "हाँ सही है।",
-        "golden_text": (
-            "ठीक है Chintan जी, धन्यवाद for confirming। "
-            "कृपया ensure कर लीजिए कि आज payment complete हो जाए ताकि late charges avoid हो सके। "
-            "Have a good day!"
-        ),
-        "required_function_call": None,
     }
 ]
 
@@ -1428,29 +1315,30 @@ scenario_X_auto_debit_failed = [
         "required_function_call": None,
     },
     {
-        "input": "कल दोपहर तक कर दूंगा, UPI से करूँगा।",
+        "input": "कल दोपहर तक पूरे 12000 कर दूंगा, UPI से करूँगा।",
         "golden_text": (
-            "Let me set up this payment commitment for you... "
             "तो confirm करूँ — आप twelve thousand rupees, 8th March को UPI से pay करेंगे। सही है?"
+        ),
+        "required_function_call": None,
+    },
+    {
+        "input": "हाँ सही है।",
+        "golden_text": (
+            "आपकी payment commitment set up कर देती हूँ... "
+            "ठीक है Chintan जी, धन्यवाद for confirming। "
+            "कृपया ensure कर लीजिए कि payment 8th March तक complete हो जाए ताकि additional charges avoid हो सके। "
+            "Have a good day!"
         ),
         "required_function_call": {
             "name": "createPromiseToPay",
             "args": {
                 "accountNumber": "123456789",
                 "promiseDate": "2026-03-08",
-                "promiseAmount": 12000
+                "promiseAmount": 12000,
+                "paymentMode": "upi"
             }
         },
         "function_call_response": {"status": "success"}
-    },
-    {
-        "input": "हाँ सही है।",
-        "golden_text": (
-            "ठीक है Chintan जी, धन्यवाद for confirming। "
-            "कृपया ensure कर लीजिए कि payment 8th March तक complete हो जाए ताकि additional charges avoid हो सके। "
-            "Have a good day!"
-        ),
-        "required_function_call": None,
     }
 ]
 
@@ -1487,29 +1375,30 @@ scenario_account_mismatch_issue = [
         "required_function_call": None,
     },
     {
-        "input": "शायद 2-3 दिन लगेंगे, तब कर दूंगा payment।",
+        "input": "शायद 2-3 दिन लगेंगे, 10 March को पूरे 12000 कर दूंगा payment, bank transfer से।",
         "golden_text": (
-            "Let me set up this payment commitment for you... "
-            "तो confirm कर रही हूँ — आप twelve thousand rupees, 10th March को pay करेंगे। सही है?"
+            "तो confirm कर रही हूँ — आप twelve thousand rupees, 10th March को bank transfer से pay करेंगे। सही है?"
+        ),
+        "required_function_call": None,
+    },
+    {
+        "input": "हाँ, 10 तारीख तक कर दूंगा।",
+        "golden_text": (
+            "आपकी payment commitment set up कर देती हूँ... "
+            "Alright Chintan जी, मैंने आपकी commitment note कर ली है। "
+            "कृपया 10th March तक payment complete कर दीजिए ताकि कोई late charges आगे ना बढ़ें। "
+            "धन्यवाद, आपका दिन शुभ हो।"
         ),
         "required_function_call": {
             "name": "createPromiseToPay",
             "args": {
                 "accountNumber": "123456789",
                 "promiseDate": "2026-03-10",
-                "promiseAmount": 12000
+                "promiseAmount": 12000,
+                "paymentMode": "bank_transfer"
             }
         },
         "function_call_response": {"status": "success"}
-    },
-    {
-        "input": "हाँ, 10 तारीख तक कर दूंगा।",
-        "golden_text": (
-            "Alright Chintan जी, मैंने आपकी commitment note कर ली है। "
-            "कृपया 10th March तक payment complete कर दीजिए ताकि कोई late charges आगे ना बढ़ें। "
-            "धन्यवाद, आपका दिन शुभ हो।"
-        ),
-        "required_function_call": None,
     }
 ]
 

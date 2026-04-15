@@ -58,38 +58,32 @@ create_promise_to_pay_function = FunctionSchema(
             "type": "number",
             "description": "Amount customer commits to pay in rupees",
         },
+        "paymentMode": {
+            "type": "string",
+            "enum": ["bank_transfer", "upi", "online"],
+            "description": "Preferred payment method",
+        },
     },
-    required=["accountNumber", "promiseDate", "promiseAmount"],
+    required=["accountNumber", "promiseDate", "promiseAmount", "paymentMode"],
 )
 
 # ---------------------------------------------------------------------------
-# 3. checkSettlementEligibility
+# 3. transferCall
 # ---------------------------------------------------------------------------
-check_settlement_eligibility_function = FunctionSchema(
-    name="checkSettlementEligibility",
-    description="Checks if customer qualifies for settlement offer",
+transfer_call_function = FunctionSchema(
+    name="transferCall",
+    description="Transfers the call to a human agent for cases like settlement negotiations, legal mentions, abusive language, or explicit human-agent requests",
     properties={
         "accountNumber": {
             "type": "string",
             "description": "Customer's account number from context",
         },
-    },
-    required=["accountNumber"],
-)
-
-# ---------------------------------------------------------------------------
-# 4. offerSettlement
-# ---------------------------------------------------------------------------
-offer_settlement_function = FunctionSchema(
-    name="offerSettlement",
-    description="Retrieves settlement offer details with reduced amount",
-    properties={
-        "accountNumber": {
+        "reason": {
             "type": "string",
-            "description": "Customer's account number from context",
+            "description": "Reason for transferring to human agent (e.g. 'settlement_request', 'legal_mention', 'human_agent_request', 'abusive_language')",
         },
     },
-    required=["accountNumber"],
+    required=["accountNumber", "reason"],
 )
 
 # ---------------------------------------------------------------------------
@@ -121,16 +115,15 @@ schedule_callback_function = FunctionSchema(
 
 # ---------------------------------------------------------------------------
 # Aggregate ToolsSchema (matches VAPI model.tools order)
-# Note: endCall and transferCall are VAPI built-ins with no parameters;
-#       they are not required to be declared here since this eval framework
+# Note: endCall is a VAPI built-in with no parameters;
+#       it is not required to be declared here since this eval framework
 #       tests the LLM tool-calling logic via text pipeline only.
 # ---------------------------------------------------------------------------
 ToolsSchemaForTest = ToolsSchema(
     standard_tools=[
         record_payment_function,
         create_promise_to_pay_function,
-        check_settlement_eligibility_function,
-        offer_settlement_function,
+        transfer_call_function,
         schedule_callback_function,
     ]
 )
